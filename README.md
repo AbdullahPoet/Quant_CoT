@@ -1,154 +1,160 @@
-# DeepSeek-R1-Distill-Qwen-7B: Quantization Effect on Chain-of-Thought Reasoning
+# Quantization Effect on Reasoning in DeepSeek-R1-Distill-Qwen-7B
 
 ## Introduction
 
-This experiment studies how **GGUF quantization affects reasoning behavior, accuracy, output length, truncation, throughput, memory footprint, and overthinking** in `DeepSeek-R1-Distill-Qwen-7B`.
+In this project, I evaluated how different quantization levels affect the reasoning behavior of **DeepSeek-R1-Distill-Qwen-7B**.
 
-The benchmark compares the original **BF16** model with five quantized variants:
+The main goal was not only to compare final-answer accuracy. I also wanted to observe whether reducing model precision changes:
+
+- reasoning length,
+- reasoning-token usage,
+- truncation,
+- output throughput,
+- model size,
+- overthinking behavior,
+- and final-answer quality.
+
+I used one BF16 baseline and five GGUF quantized variants:
 
 `Q8_0`, `Q6_K`, `Q5_K_M`, `Q4_K_M`, and `Q3_K_M`.
 
-The central question is not only whether lower precision changes final-answer accuracy, but also whether it changes **how much the reasoning model thinks before answering**. This is especially relevant for reasoning LLMs because a smaller model artifact can be faster and cheaper to run while still producing long reasoning traces.
+The experiment was completed in two notebooks.
 
-> **Important evaluation note:** the current run contains a substantial answer-parsing issue for `math500`. Therefore, the absolute accuracy values should be treated as preliminary until the parser is corrected and the saved generations are rescored.
+The first notebook runs the complete benchmark and collects the model outputs and system-level measurements. The second notebook fixes the Math500 answer-parsing problem using the already generated outputs and recalculates the affected accuracy results without rerunning inference.
 
 ---
 
-## Experimental Setup
+## Project Notebooks
 
-- **Model:** `deepseek-ai/DeepSeek-R1-Distill-Qwen-7B`
-- **Baseline precision:** BF16
-- **Quantized formats:** GGUF
-- **Variants:** Q8_0, Q6_K, Q5_K_M, Q4_K_M, Q3_K_M
-- **Original benchmark:** 552 questions
-- **Evaluation subset:** 276 questions
-- **Total inference rows:** 1,656
-- **Maximum generation tokens:** 8,192
-- **Inference framework:** vLLM for BF16 / quantized execution pipeline used by the notebook
-- **Sampling strategy:** approximately half of the original benchmark, stratified by dataset/category and difficulty
+### `deepseek_r1_7b_quantization_effect_on_cot.ipynb`
 
-### Benchmark Composition
+This is the main benchmark notebook.
 
-| Dataset | Category | Sampled Questions |
+In this notebook, I:
+
+- loaded the original 552-question benchmark,
+- sampled half of each dataset/category reproducibly,
+- evaluated 276 questions,
+- ran BF16 first,
+- ran Q8_0, Q6_K, Q5_K_M, Q4_K_M, and Q3_K_M,
+- saved every generated answer to Google Drive,
+- measured reasoning tokens and output tokens,
+- measured truncation and parse success,
+- measured inference throughput,
+- recorded model artifact size,
+- collected GPU and RAM telemetry,
+- compared each quantized model against BF16,
+- calculated a BF16-based overthinking proxy,
+- performed exact McNemar comparisons,
+- and exported the experiment results.
+
+There were:
+
+```text
+276 benchmark questions
+×
+6 precision variants
+=
+1,656 model-question evaluations
+```
+
+The final integrity check in the notebook confirmed:
+
+```text
+Final integrity check passed.
+Total question-model evaluations: 1656
+```
+
+---
+
+### `parse_fixing.ipynb`
+
+After the main run, I found that Math500 had a parsing problem.
+
+The model usually produced valid mathematical answers using formats such as:
+
+```text
+\boxed{\dfrac{33}{100}}
+```
+
+or:
+
+```text
+Final Answer:
+\boxed{...}
+```
+
+but the original benchmark parser mainly expected:
+
+```text
+FINAL_ANSWER: ...
+```
+
+Because of this formatting mismatch, many valid Math500 answers were originally recorded as:
+
+```text
+missing_final_answer
+```
+
+instead of being evaluated.
+
+The second notebook fixes this problem using the **already saved generations**. No model inference is rerun.
+
+The repaired parser supports:
+
+- `FINAL_ANSWER:`
+- `Final Answer:`
+- `\boxed{...}`
+- nested LaTeX inside `\boxed{}`
+- numeric comparison
+- tuple/coordinate comparison
+- normalized LaTeX comparison
+- symbolic equivalence using SymPy
+
+The parser also keeps truncated generations separate. If a generation reaches the token limit without producing a final answer, I do not infer an answer from the reasoning trace.
+
+---
+
+# Benchmark Setup
+
+## Model
+
+```text
+deepseek-ai/DeepSeek-R1-Distill-Qwen-7B
+```
+
+## Precision Variants
+
+| Variant | Type |
+|---|---|
+| BF16 | Baseline |
+| Q8_0 | GGUF quantized |
+| Q6_K | GGUF quantized |
+| Q5_K_M | GGUF quantized |
+| Q4_K_M | GGUF quantized |
+| Q3_K_M | GGUF quantized |
+
+## Benchmark Composition
+
+| Dataset | Category | Questions Used |
 |---|---|---:|
 | Date Understanding | Temporal reasoning | 50 |
-| LogiQA2 | Logical reasoning | 50 |
 | Math500 | Mathematical reasoning | 50 |
 | SimpleQA Verified | Factual QA | 50 |
 | StrategyQA | Commonsense multistep reasoning | 50 |
+| LogiQA2 | Logical reasoning | 50 |
 | Misguided Attention | Overthinking traps | 26 |
 | **Total** |  | **276** |
 
 ---
 
-## Main Comparison
+# Math500 Parsing Repair
 
-| Precision | Accuracy | Δ Accuracy vs BF16 | Mean Reasoning Tokens | Truncation | Parse Success | Overthinking* | Artifact Size | Output Throughput |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| **BF16** | **37.6%** | — | 1,571 | 9.42% | 71.74% | 24.04% | 14.19 GB | 63.46 tok/s |
-| Q8_0 | 35.2% | -2.4 pp | 1,582 | 9.06% | 68.12% | 17.14% | 7.54 GB | 64.35 tok/s |
-| Q6_K | 35.6% | -2.0 pp | 1,570 | 10.51% | 68.84% | 20.00% | 5.82 GB | 69.90 tok/s |
-| **Q5_K_M** | **37.6%** | **0.0 pp** | **1,569** | **9.06%** | **70.29%** | 17.42% | **5.07 GB** | **77.31 tok/s** |
-| Q4_K_M | 34.8% | -2.8 pp | 1,776 | 13.04% | 67.75% | 12.14% | 4.36 GB | **102.01 tok/s** |
-| Q3_K_M | 35.6% | -2.0 pp | 1,728 | 12.32% | 69.20% | 15.52% | 3.55 GB | 89.60 tok/s |
+Before repairing the parser, Math500 parsing was almost completely unsuccessful.
 
-\*Overthinking rate is calculated only where an overthinking label was available.
+## Original Math500 Parse Success
 
----
-
-## Key Observations
-
-### Q5_K_M preserved measured accuracy while greatly reducing size
-
-`Q5_K_M` matched the measured BF16 accuracy:
-
-- BF16: **37.6%**
-- Q5_K_M: **37.6%**
-
-At the same time, the model artifact decreased from:
-
-- **14.19 GB → 5.07 GB**
-- approximately **64% smaller**
-
-Its average reasoning length also remained almost unchanged:
-
-- BF16: **1,571 reasoning tokens**
-- Q5_K_M: **1,569 reasoning tokens**
-
-In this run, Q5_K_M therefore shows the strongest compression result without an observed loss in aggregate measured accuracy.
-
----
-
-### More reasoning tokens did not mean higher accuracy
-
-The more aggressively quantized Q4 and Q3 variants generated longer reasoning traces:
-
-| Precision | Reasoning Token Change vs BF16 | Accuracy Change vs BF16 |
-|---|---:|---:|
-| Q4_K_M | **+13.01%** | **-2.8 pp** |
-| Q3_K_M | **+9.96%** | **-2.0 pp** |
-
-This is an important result for the experiment:
-
-> **Longer chain-of-thought generation is not necessarily associated with better final-answer accuracy.**
-
-Q4_K_M generated the most reasoning tokens on average while producing the lowest aggregate measured accuracy.
-
----
-
-### Quantization improved inference throughput
-
-Output-token throughput increased as quantization became more aggressive:
-
-| Precision | Output Throughput |
-|---|---:|
-| BF16 | 63.46 tok/s |
-| Q8_0 | 64.35 tok/s |
-| Q6_K | 69.90 tok/s |
-| Q5_K_M | 77.31 tok/s |
-| Q4_K_M | **102.01 tok/s** |
-| Q3_K_M | 89.60 tok/s |
-
-Q4_K_M produced approximately **61% higher token throughput than BF16** in this run.
-
----
-
-## Statistical Comparison Against BF16
-
-Exact McNemar tests were used to compare per-question correctness between BF16 and each quantized variant.
-
-| Precision | Correct → Wrong | Wrong → Correct | Discordant Pairs | Exact p-value |
-|---|---:|---:|---:|---:|
-| Q8_0 | 27 | 21 | 48 | 0.4709 |
-| Q6_K | 24 | 19 | 43 | 0.5424 |
-| Q5_K_M | 21 | 21 | 42 | 1.0000 |
-| Q4_K_M | 24 | 17 | 41 | 0.3489 |
-| Q3_K_M | 22 | 17 | 39 | 0.5224 |
-
-At the conventional `α = 0.05` threshold, none of these comparisons are statistically significant.
-
-This means the current sample does **not provide sufficient evidence that any quantized variant has a different correctness rate from BF16**, even though the observed point estimates differ.
-
----
-
-## Dataset-Level Accuracy
-
-Misguided Attention is excluded from this accuracy table because it is evaluated primarily as an overthinking/trap benchmark rather than with the same deterministic correctness scoring used for the other datasets.
-
-| Precision | Date Understanding | Math500 | SimpleQA | StrategyQA | LogiQA2 |
-|---|---:|---:|---:|---:|---:|
-| BF16 | 80% | 0% | 2% | 58% | 48% |
-| Q8_0 | 60% | 0% | 2% | 56% | 58% |
-| Q6_K | 70% | 0% | 4% | 58% | 46% |
-| Q5_K_M | 80% | 0% | 4% | **66%** | 38% |
-| Q4_K_M | 66% | 4% | 2% | 54% | 48% |
-| Q3_K_M | 78% | 4% | **6%** | 54% | 36% |
-
-### Math500 Parser Warning
-
-The apparent Math500 accuracy is not currently reliable because answer parsing almost completely failed:
-
-| Precision | Math500 Parse Success |
+| Precision | Original Parse Success |
 |---|---:|
 | BF16 | 2% |
 | Q8_0 | 0% |
@@ -157,43 +163,201 @@ The apparent Math500 accuracy is not currently reliable because answer parsing a
 | Q4_K_M | 6% |
 | Q3_K_M | 4% |
 
-Because generated answers were frequently not extracted correctly, a `0–4%` measured accuracy should **not** be interpreted as the model's true Math500 performance.
+These values did not represent actual mathematical capability. They mainly represented a mismatch between the answer format generated by the model and the answer format expected by the parser.
 
-The recommended next step is to **repair the Math500 answer parser and rescore the already saved generations without rerunning inference**.
+After applying the second notebook, the results changed substantially.
+
+## Corrected Math500 Results
+
+| Precision | Parsed | Parse Success | Correct | Corrected Math500 Accuracy |
+|---|---:|---:|---:|---:|
+| BF16 | 46 / 50 | 92% | 43 / 50 | **86%** |
+| Q8_0 | 47 / 50 | 94% | 44 / 50 | **88%** |
+| Q6_K | 48 / 50 | **96%** | 46 / 50 | **92%** |
+| Q5_K_M | 47 / 50 | 94% | 45 / 50 | **90%** |
+| Q4_K_M | 47 / 50 | 94% | 46 / 50 | **92%** |
+| Q3_K_M | 47 / 50 | 94% | 45 / 50 | **90%** |
+
+The repair recovered **275 Math500 answers** that had previously failed parsing.
+
+The extraction methods used by the repaired parser were:
+
+| Extraction Method | Rows |
+|---|---:|
+| `boxed_post_think` | 272 |
+| `explicit_FINAL_ANSWER` | 7 |
+| `boxed_full_text` | 2 |
+| `after_final_marker` | 1 |
+| `truncated_no_final_answer` | 18 |
+
+The symbolic/equivalence comparison methods included:
+
+| Comparison Method | Rows |
+|---|---:|
+| Normalized exact match | 243 |
+| SymPy equivalent | 13 |
+| SymPy not equal | 12 |
+| Numeric comparison | 9 |
+| Tuple/component comparison | 3 |
+| Text fallback | 2 |
+| Not scored because no final answer | 18 |
+
+The remaining **18 unresolved outputs** were not ordinary parser failures. They were generations that ended because of the generation-length limit and did not reach a final answer.
 
 ---
 
-## Truncation and Long Reasoning
+# Corrected Overall Accuracy
 
-The benchmark also shows that aggressive quantization can increase the probability that reasoning reaches the generation limit.
+Repairing Math500 changed the aggregate benchmark accuracy significantly.
 
-Overall truncation:
+| Precision | Original Accuracy | Corrected Accuracy | Change |
+|---|---:|---:|---:|
+| BF16 | 37.6% | **54.8%** | +17.2 pp |
+| Q8_0 | 35.2% | **52.8%** | +17.6 pp |
+| Q6_K | 35.6% | **54.0%** | +18.4 pp |
+| Q5_K_M | 37.6% | **55.6%** | +18.0 pp |
+| Q4_K_M | 34.8% | **52.4%** | +17.6 pp |
+| Q3_K_M | 35.6% | **52.8%** | +17.2 pp |
 
-- BF16: **9.42%**
-- Q5_K_M: **9.06%**
-- Q4_K_M: **13.04%**
-- Q3_K_M: **12.32%**
+The corrected results show that the original aggregate accuracy was strongly affected by Math500 answer extraction.
 
-Several Misguided Attention generations reached approximately **8,192 reasoning tokens** and terminated with:
+After repairing the parser, **Q5_K_M has the highest measured overall accuracy at 55.6%**, followed by BF16 at 54.8% and Q6_K at 54.0%.
+
+This also shows that quantization did not create a simple monotonic relationship where lower precision always produced lower accuracy.
+
+---
+
+# Accuracy vs Model Size
+
+| Precision | Corrected Accuracy | Model Artifact Size |
+|---|---:|---:|
+| BF16 | 54.8% | 14.19 GB |
+| Q8_0 | 52.8% | 7.54 GB |
+| Q6_K | 54.0% | 5.82 GB |
+| Q5_K_M | **55.6%** | **5.07 GB** |
+| Q4_K_M | 52.4% | 4.36 GB |
+| Q3_K_M | 52.8% | 3.55 GB |
+
+The strongest result in this comparison is Q5_K_M.
+
+Compared with BF16:
+
+```text
+BF16
+Accuracy: 54.8%
+Size:     14.19 GB
+
+Q5_K_M
+Accuracy: 55.6%
+Size:      5.07 GB
+```
+
+Q5_K_M reduced the model artifact size by roughly **64%** while maintaining comparable—and in this benchmark slightly higher—measured accuracy.
+
+This does not mean Q5_K_M is universally more accurate than BF16. It means that, on this specific sampled benchmark, reducing the model to Q5_K_M did not produce an observable aggregate accuracy loss.
+
+---
+
+# Reasoning Length
+
+The main notebook also measured the number of reasoning tokens produced by each precision.
+
+| Precision | Mean Reasoning Tokens | Change vs BF16 |
+|---|---:|---:|
+| BF16 | ~1,571 | — |
+| Q8_0 | ~1,582 | +0.7% |
+| Q6_K | ~1,570 | -0.1% |
+| Q5_K_M | ~1,569 | -0.1% |
+| Q4_K_M | ~1,776 | **+13.0%** |
+| Q3_K_M | ~1,728 | **+10.0%** |
+
+Q5_K_M and Q6_K remained very close to BF16 in reasoning-token usage.
+
+The more aggressive Q4_K_M and Q3_K_M variants behaved differently. They produced substantially longer reasoning traces.
+
+However, those longer traces did not produce higher aggregate accuracy.
+
+```text
+Q4_K_M:
+longer reasoning
++
+higher truncation
++
+lower accuracy than Q5_K_M / BF16
+```
+
+This is one of the main observations from the experiment: **more generated reasoning tokens do not automatically mean better reasoning performance**.
+
+---
+
+# Truncation
+
+| Precision | Truncation Rate |
+|---|---:|
+| BF16 | 9.42% |
+| Q8_0 | 9.06% |
+| Q6_K | 10.51% |
+| Q5_K_M | 9.06% |
+| Q4_K_M | **13.04%** |
+| Q3_K_M | **12.32%** |
+
+Q4_K_M and Q3_K_M show the highest overall truncation rates.
+
+This matches their longer reasoning traces. In some cases the model spends more tokens reasoning until it reaches the maximum generation length.
+
+For those cases the output can end with:
 
 ```text
 finish_reason = length
-parse_status = missing_final_answer
 ```
 
-This is a useful failure mode for studying **reasoning-budget exhaustion**: the model can spend its entire token budget reasoning and fail to produce a final answer.
+and no final answer is produced.
+
+The Math500 repair notebook found **18 such Math500 generations**. These were deliberately kept as unresolved because there was no completed final answer to evaluate.
 
 ---
 
-## Misguided Attention / Overthinking
+# Inference Throughput
 
-Across all 1,656 generations:
+Quantization also affected inference speed.
 
-- **188** were marked as overthinking
-- **870** were marked as not overthinking
-- **598** did not receive an overthinking label
+| Precision | Output Throughput |
+|---|---:|
+| BF16 | 63.46 tokens/s |
+| Q8_0 | 64.35 tokens/s |
+| Q6_K | 69.90 tokens/s |
+| Q5_K_M | 77.31 tokens/s |
+| Q4_K_M | **102.01 tokens/s** |
+| Q3_K_M | 89.60 tokens/s |
 
-Among valid labeled cases, the aggregate rates were:
+Q4_K_M produced the highest output-token throughput in this run.
+
+Compared with BF16:
+
+```text
+BF16   : 63.46 tokens/s
+Q4_K_M : 102.01 tokens/s
+```
+
+This is approximately a **61% increase in output-token throughput**.
+
+The speed improvement, however, comes with a different reasoning profile: Q4_K_M also produced more reasoning tokens and had a higher truncation rate.
+
+---
+
+# Overthinking Analysis
+
+The benchmark also contains a BF16-based overthinking proxy.
+
+Across the complete 1,656 generations:
+
+```text
+188  -> marked as overthinking
+870  -> marked as not overthinking
+598  -> no overthinking label
+```
+
+For cases where a label was available:
 
 | Precision | Overthinking Rate |
 |---|---:|
@@ -204,66 +368,198 @@ Among valid labeled cases, the aggregate rates were:
 | Q4_K_M | 12.14% |
 | Q3_K_M | 15.52% |
 
-An interesting pattern appears here: Q4/Q3 produced **longer reasoning traces overall**, while their current overthinking-label rates were lower than BF16.
+One interesting result is that Q4_K_M and Q3_K_M generated longer reasoning traces while showing lower values under this particular overthinking proxy.
 
-This suggests that **reasoning length and overthinking are not equivalent metrics**. A model may generate more tokens without necessarily triggering the benchmark's definition of overthinking.
+This indicates that **reasoning length and overthinking are not the same measurement**.
 
----
-
-## Model Size Reduction
-
-| Precision | Artifact Size | Reduction vs BF16 |
-|---|---:|---:|
-| BF16 | 14.19 GB | — |
-| Q8_0 | 7.54 GB | ~46.8% |
-| Q6_K | 5.82 GB | ~58.9% |
-| Q5_K_M | 5.07 GB | ~64.3% |
-| Q4_K_M | 4.36 GB | ~69.3% |
-| Q3_K_M | 3.55 GB | ~75.0% |
-
-The results show a large reduction in storage requirements without a monotonic collapse in measured benchmark accuracy.
+A generation can be long without meeting the overthinking definition used in the benchmark, while another generation can be shorter but still contain unnecessary reasoning relative to the BF16 reference.
 
 ---
 
-## Current Interpretation
+# Misguided Attention
 
-The current experiment provides three notable signals:
+The Misguided Attention subset contains 26 questions per precision and was used as an overthinking/trap-oriented benchmark.
 
-1. **Quantization degradation is not monotonic.**  
-   Lower precision does not automatically produce proportionally lower measured accuracy.
-
-2. **Moderate quantization can preserve reasoning performance.**  
-   Q5_K_M matched BF16 aggregate measured accuracy while being roughly 64% smaller and providing higher output throughput.
-
-3. **More generated reasoning can be counterproductive.**  
-   Q4_K_M and Q3_K_M generated substantially more reasoning tokens than BF16 without improving accuracy, while also showing higher truncation rates.
-
-These findings support further investigation into the relationship between:
+Several generations reached the maximum generation budget:
 
 ```text
-quantization
-      ↓
-reasoning behavior
-      ↓
-reasoning-token consumption
-      ↓
-truncation / overthinking
-      ↓
-final-answer quality
+reasoning_tokens ≈ 8192
+finish_reason = length
+final_answer = missing
 ```
 
----
+These examples show a concrete failure mode of reasoning models: the model may continue reasoning until the generation budget is exhausted and never produce a usable final answer.
 
-## Important Limitations
-
-The current results should be interpreted with the following limitations:
-
-- Math500 answer extraction requires correction.
-- Parse success differs across precision variants.
-- Some generations reach the 8,192-token output limit.
-- Overthinking labels are unavailable for a substantial subset of generations.
-- Artifact size is a useful storage measure but is not equivalent to actual runtime GPU-memory consumption under vLLM.
-- The benchmark uses a 276-question stratified subset rather than the complete 552-question pool.
-- Statistical non-significance does not prove that two precision formats are equivalent; it only indicates that a difference was not detected with the current sample and test.
+This behavior is different from simply producing an incorrect answer. The model consumes the full reasoning budget but fails to complete the response.
 
 ---
+
+# Corrected McNemar Comparison
+
+After Math500 rescoring, I recalculated the paired correctness comparison against BF16.
+
+| Precision | BF16 Correct → Quant Wrong | BF16 Wrong → Quant Correct | Discordant Pairs | Exact p-value |
+|---|---:|---:|---:|---:|
+| Q8_0 | 30 | 25 | 55 | 0.5901 |
+| Q6_K | 24 | 22 | 46 | 0.8830 |
+| Q5_K_M | 22 | 24 | 46 | 0.8830 |
+| Q4_K_M | 24 | 18 | 42 | 0.4408 |
+| Q3_K_M | 23 | 18 | 41 | 0.5327 |
+
+All corrected comparisons remain above:
+
+```text
+p = 0.05
+```
+
+Therefore, this experiment does not show a statistically significant difference in correctness between BF16 and any of the tested quantized variants on the sampled benchmark.
+
+The point estimates are different, but the paired statistical test does not provide evidence that those differences are larger than could be explained by variation within this sample.
+
+---
+
+# What the Outputs Indicate
+
+The two notebooks together show several patterns.
+
+### Quantization degradation is not monotonic
+
+Reducing precision did not produce a steady reduction in benchmark accuracy.
+
+After fixing Math500 parsing:
+
+```text
+Q5_K_M  = 55.6%
+BF16     = 54.8%
+Q6_K    = 54.0%
+Q8_0    = 52.8%
+Q3_K_M  = 52.8%
+Q4_K_M  = 52.4%
+```
+
+The quantization level alone therefore does not explain the full behavior of the model.
+
+### Q5_K_M provides a strong size/performance tradeoff
+
+Q5_K_M reduced the model artifact from approximately:
+
+```text
+14.19 GB
+to
+5.07 GB
+```
+
+while maintaining very similar reasoning-token usage and comparable aggregate benchmark accuracy.
+
+### Aggressive quantization can change reasoning behavior
+
+Q4_K_M and Q3_K_M generated around 10–13% more reasoning tokens than BF16.
+
+At the same time, they showed higher truncation rates and did not achieve higher corrected accuracy.
+
+This suggests that aggressive quantization can affect not only the final answer but also the internal generation behavior of a reasoning model.
+
+### Longer reasoning is not automatically better reasoning
+
+The experiment gives a direct example of this pattern.
+
+Q4_K_M produced the longest average reasoning trace and the highest throughput, but it did not produce the highest corrected accuracy.
+
+The result supports the distinction between:
+
+```text
+reasoning quantity
+```
+
+and:
+
+```text
+reasoning effectiveness
+```
+
+### Parsing quality strongly affects reasoning benchmarks
+
+The original Math500 results were close to zero because the evaluator could not recognize the answer format generated by the model.
+
+After repairing the parser:
+
+```text
+BF16 Math500:
+0% -> 86%
+
+Q8_0:
+0% -> 88%
+
+Q6_K:
+0% -> 92%
+
+Q5_K_M:
+0% -> 90%
+
+Q4_K_M:
+4% -> 92%
+
+Q3_K_M:
+4% -> 90%
+```
+
+This demonstrates that evaluation infrastructure can materially change the measured performance of a reasoning model even when the underlying model generations remain exactly the same.
+
+---
+
+# Output Files
+
+The main benchmark creates files containing the generated answers, summaries, degradation analysis, category-level results, telemetry, and Misguided Attention review data.
+
+The Math500 repair notebook creates:
+
+```text
+rescored/
+└── math500_parse_repair/
+    ├── all_results_math500_rescored.csv
+    ├── math500_rescore_audit.csv
+    └── math500_rescore_summary.csv
+```
+
+### `all_results_math500_rescored.csv`
+
+Contains the complete benchmark results with the repaired Math500 parsing and corrected Math500 correctness values.
+
+### `math500_rescore_audit.csv`
+
+Contains the Math500-specific audit information, including:
+
+- original parser output,
+- repaired extracted answer,
+- extraction method,
+- comparison method,
+- original correctness,
+- repaired correctness,
+- and truncation information.
+
+### `math500_rescore_summary.csv`
+
+Contains the corrected Math500 summary for each precision.
+
+---
+
+# Final Result
+
+The main result of this experiment is that quantization changes more than model size.
+
+It can affect:
+
+```text
+model size
+inference throughput
+reasoning length
+truncation behavior
+answer stability
+and final benchmark accuracy
+```
+
+At moderate quantization, especially Q5_K_M, the model retained performance close to the BF16 baseline while using a much smaller model artifact.
+
+At more aggressive quantization levels, the model generated longer reasoning traces and truncated more often, showing that additional reasoning-token usage does not necessarily translate into better final answers.
+
+The Math500 repair also showed that reliable answer extraction is essential when evaluating reasoning models. The model outputs themselves did not change; only the evaluation parser changed, yet the measured Math500 and overall benchmark accuracy changed substantially.
